@@ -10,19 +10,49 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Find project file
+        id: findproj
+        shell: bash
+        run: |
+          csproj=$(find . -name "*.csproj" | head -n 1)
+          if [ -z "$csproj" ]; then
+            echo "❌ No .csproj file found"
+            exit 1
+          fi
+          echo "Found project: $csproj"
+          echo "projpath=$csproj" >> $GITHUB_OUTPUT
+
+      - name: Detect .NET version from .csproj
+        id: detectver
+        shell: bash
+        run: |
+          framework=$(grep -oPm1 "(?<=<TargetFramework>)[^<]+" "${{ steps.findproj.outputs.projpath }}")
+          echo "Detected target framework: $framework"
+
+          if [[ "$framework" == net6* ]]; then version="6.0.x";
+          elif [[ "$framework" == net7* ]]; then version="7.0.x";
+          elif [[ "$framework" == net8* ]]; then version="8.0.x";
+          elif [[ "$framework" == net9* ]]; then version="9.0.x";
+          else
+            echo "❌ Unsupported TargetFramework: $framework"
+            exit 1
+          fi
+
+          echo "dotnet-version=$version" >> $GITHUB_OUTPUT
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x' # change if using .NET 8 or lower
+          dotnet-version: ${{ steps.detectver.outputs.dotnet-version }}
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore "${{ steps.findproj.outputs.projpath }}"
 
       - name: Publish self-contained EXE
-        run: dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
+        run: dotnet publish "${{ steps.findproj.outputs.projpath }}" -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:EnableWindowsTargeting=true -o ./publish
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: TelemedicineApp-windows
-          path: publish/
+          path: publish/**
