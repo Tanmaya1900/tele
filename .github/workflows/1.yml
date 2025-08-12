@@ -1,0 +1,58 @@
+name: Publish Windows EXE
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Find project file (PowerShell)
+        id: findproj
+        shell: pwsh
+        run: |
+          $proj = Get-ChildItem -Path . -Recurse -Filter *.csproj | Select-Object -First 1
+          if (-not $proj) {
+            Write-Host "❌ No .csproj file found"
+            exit 1
+          }
+          Write-Host "Found project: $($proj.FullName)"
+          echo "projpath=$($proj.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Detect .NET version from .csproj (PowerShell)
+        id: detectver
+        shell: pwsh
+        run: |
+          [xml]$xml = Get-Content "${{ steps.findproj.outputs.projpath }}"
+          $framework = $xml.Project.PropertyGroup.TargetFramework
+          Write-Host "Detected target framework: $framework"
+
+          switch -Regex ($framework) {
+            'net6' { $ver = '6.0.x' }
+            'net7' { $ver = '7.0.x' }
+            'net8' { $ver = '8.0.x' }
+            'net9' { $ver = '9.0.x' }
+            default { Write-Host "❌ Unsupported TargetFramework: $framework"; exit 1 }
+          }
+
+          echo "dotnet-version=$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ steps.detectver.outputs.dotnet-version }}
+
+      - name: Restore dependencies
+        run: dotnet restore "${{ steps.findproj.outputs.projpath }}"
+
+      - name: Publish self-contained EXE
+        run: dotnet publish "${{ steps.findproj.outputs.projpath }}" -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:EnableWindowsTargeting=true -o ./publish
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TelemedicineApp-windows
+          path: publish/**
